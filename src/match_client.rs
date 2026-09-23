@@ -75,14 +75,10 @@ async fn play_once(engine: &Engine, url: &str, match_id: &str, token: &str) -> R
     ))
     .await?;
     let server_hello = loop {
-        let msg = match
-            tokio::time::timeout(Duration::from_secs(10), stream.next()).await
-        {
+        let msg = match tokio::time::timeout(Duration::from_secs(10), stream.next()).await {
             Ok(Some(Ok(m))) => m,
             Ok(Some(Err(_)) | None) => return Err(BotError::MatchClosed { code: None }),
-            Err(_) => {
-                return Err(BotError::Protocol("match: handshake timed out".into()))
-            }
+            Err(_) => return Err(BotError::Protocol("match: handshake timed out".into())),
         };
         let text = crate::lobby::decode_text(msg)?;
         // Tolerate benign pre-hello frames; anything else is a violation.
@@ -102,8 +98,10 @@ async fn play_once(engine: &Engine, url: &str, match_id: &str, token: &str) -> R
     if server_hello.capabilities.iter().any(|c| c == "reconnect") {
         debug!("match: executor advertises reconnect capability");
     }
-    sink.send(tungstenite::Message::text(client_hello(match_id).to_string()))
-        .await?;
+    sink.send(tungstenite::Message::text(
+        client_hello(match_id).to_string(),
+    ))
+    .await?;
     info!(
         version = ?server_hello.selected_version,
         match_id = %match_id,
@@ -157,9 +155,9 @@ async fn play_once(engine: &Engine, url: &str, match_id: &str, token: &str) -> R
                 );
             }
             ServerFrame::TurnRequest(req) => {
-                let cfg = config.clone().ok_or_else(|| {
-                    BotError::Protocol("turn_request before match_start".into())
-                })?;
+                let cfg = config
+                    .clone()
+                    .ok_or_else(|| BotError::Protocol("turn_request before match_start".into()))?;
                 let decided_at = std::time::Instant::now();
                 let decision = decide_safely(engine, &req.state, &req.valid_actions, &cfg);
                 tracing::info!(
@@ -218,11 +216,7 @@ async fn connect_gateway(url: &str, token: &str) -> Result<WsStream> {
     // A plain URL gives us a fully-formed upgrade request; we only add the
     // token subprotocol header on top (CZ issue 2932 — never a query string).
     let mut request = url.into_client_request()?;
-    let subprotocol = format!(
-        "{}, {}",
-        crate::proto::frames::BOT_TOKEN_SUBPROTOCOL,
-        token
-    );
+    let subprotocol = format!("{}, {}", crate::proto::frames::BOT_TOKEN_SUBPROTOCOL, token);
     request.headers_mut().insert(
         "Sec-WebSocket-Protocol",
         HeaderValue::from_str(&subprotocol)
@@ -320,8 +314,14 @@ mod tests {
 
     #[test]
     fn safe_fallback_prefers_check_then_fold() {
-        assert_eq!(safe_fallback(&["fold".into(), "check".into()]), Decision::check());
-        assert_eq!(safe_fallback(&["fold".into(), "call".into()]), Decision::fold());
+        assert_eq!(
+            safe_fallback(&["fold".into(), "check".into()]),
+            Decision::check()
+        );
+        assert_eq!(
+            safe_fallback(&["fold".into(), "call".into()]),
+            Decision::fold()
+        );
         assert_eq!(safe_fallback(&["call".into()]), Decision::check());
     }
 }

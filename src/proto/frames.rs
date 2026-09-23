@@ -85,16 +85,28 @@ pub struct Decision {
 
 impl Decision {
     pub fn fold() -> Self {
-        Decision { action: "fold".into(), amount: None }
+        Decision {
+            action: "fold".into(),
+            amount: None,
+        }
     }
     pub fn check() -> Self {
-        Decision { action: "check".into(), amount: None }
+        Decision {
+            action: "check".into(),
+            amount: None,
+        }
     }
     pub fn call() -> Self {
-        Decision { action: "call".into(), amount: None }
+        Decision {
+            action: "call".into(),
+            amount: None,
+        }
     }
     pub fn raise(amount: i64) -> Self {
-        Decision { action: "raise".into(), amount: Some(amount) }
+        Decision {
+            action: "raise".into(),
+            amount: Some(amount),
+        }
     }
 }
 
@@ -257,14 +269,26 @@ pub enum ServerFrame {
     Ping,
     Matched(Matched),
     Evict,
-    MatchStart { match_id: String, config: GameConfig },
-    RoundStart { match_id: String, state: RoundStartState },
+    MatchStart {
+        match_id: String,
+        config: GameConfig,
+    },
+    RoundStart {
+        match_id: String,
+        state: RoundStartState,
+    },
     TurnRequest(TurnRequest),
     ActionRejected(ActionRejected),
     MatchEnd(MatchEnd),
-    Error { code: String, message: String },
+    Error {
+        code: String,
+        message: String,
+    },
     /// Any other type — MUST be ignored (forward compat).
-    Other { type_name: String, value: Value },
+    Other {
+        type_name: String,
+        value: Value,
+    },
 }
 
 impl ServerFrame {
@@ -295,10 +319,11 @@ impl ServerFrame {
                     .cloned()
                     .map(serde_json::from_value::<GameConfig>)
                     .transpose()?
-                    .ok_or_else(|| {
-                        BotError::Protocol("match_start missing game_config".into())
-                    })?;
-                ServerFrame::MatchStart { match_id: match_id(), config }
+                    .ok_or_else(|| BotError::Protocol("match_start missing game_config".into()))?;
+                ServerFrame::MatchStart {
+                    match_id: match_id(),
+                    config,
+                }
             }
             "round_start" => {
                 let state = value
@@ -312,15 +337,16 @@ impl ServerFrame {
                         your_hole_cards: vec![],
                         stacks: vec![],
                     });
-                ServerFrame::RoundStart { match_id: match_id(), state }
+                ServerFrame::RoundStart {
+                    match_id: match_id(),
+                    state,
+                }
             }
             "turn_request" => {
                 let req: TurnRequest = serde_json::from_value(value)?;
                 ServerFrame::TurnRequest(req)
             }
-            "action_rejected" => {
-                ServerFrame::ActionRejected(serde_json::from_value(value)?)
-            }
+            "action_rejected" => ServerFrame::ActionRejected(serde_json::from_value(value)?),
             "match_end" => ServerFrame::MatchEnd(serde_json::from_value(value)?),
             "error" => ServerFrame::Error {
                 code: value
@@ -334,7 +360,10 @@ impl ServerFrame {
                     .unwrap_or("")
                     .to_string(),
             },
-            other => ServerFrame::Other { type_name: other.to_string(), value },
+            other => ServerFrame::Other {
+                type_name: other.to_string(),
+                value,
+            },
         };
         Ok(frame)
     }

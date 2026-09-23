@@ -85,9 +85,10 @@ struct Cli {
     #[arg(long)]
     river_table: Option<PathBuf>,
 
-    /// EHS Monte-Carlo samples per cluster computation. Use the SAME value
-    /// your trainer used (run.sh exported EHS_SAMPLES=100; the engine's
-    /// default is 1000). Overrides the EHS_SAMPLES env var.
+    /// EHS Monte-Carlo samples for the bot's own fallback heuristic
+    /// (used only on blueprint misses). Does NOT affect infoset hashes — the
+    /// current engine's hash path never runs EHS (the hash always takes the
+    /// padded-5-board river arm). Overrides the EHS_SAMPLES env var.
     #[arg(long)]
     ehs_samples: Option<usize>,
 

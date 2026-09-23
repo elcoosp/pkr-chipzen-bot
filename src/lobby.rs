@@ -21,9 +21,7 @@ use tokio_tungstenite::{connect_async, tungstenite, WebSocketStream};
 use tracing::{debug, info, warn};
 
 use crate::error::{BotError, Result};
-use crate::proto::frames::{
-    lobby_authenticate, lobby_pong, Matched, ServerFrame, ServerHello,
-};
+use crate::proto::frames::{lobby_authenticate, lobby_pong, Matched, ServerFrame, ServerHello};
 
 /// Anything the supervisor needs to know about a live lobby connection.
 pub struct Lobby {
@@ -50,14 +48,19 @@ pub async fn connect(
         WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>,
     >,
 )> {
-    let url = format!("{}/ws/external/bot/{bot_id}", base_url.trim_end_matches('/'));
+    let url = format!(
+        "{}/ws/external/bot/{bot_id}",
+        base_url.trim_end_matches('/')
+    );
     info!(url = %url, "lobby: connecting");
     let (ws, _resp) = connect_async(url.as_str()).await?;
     let (mut sink, mut stream) = ws.split();
 
     // First frame must be authenticate.
-    sink.send(tungstenite::Message::text(lobby_authenticate(token).to_string()))
-        .await?;
+    sink.send(tungstenite::Message::text(
+        lobby_authenticate(token).to_string(),
+    ))
+    .await?;
 
     // Wait for the server hello (or an early close).
     let hello = loop {
@@ -153,11 +156,11 @@ pub(crate) fn decode_text(msg: tungstenite::Message) -> Result<String> {
         }),
         tungstenite::Message::Ping(_) | tungstenite::Message::Pong(_) => {
             // Protocol-level ping/pong is handled by tungstenite itself.
-            Err(BotError::Protocol("unexpected protocol-level ping/pong".into()))
+            Err(BotError::Protocol(
+                "unexpected protocol-level ping/pong".into(),
+            ))
         }
-        tungstenite::Message::Frame(_) => {
-            Err(BotError::Protocol("unexpected raw frame".into()))
-        }
+        tungstenite::Message::Frame(_) => Err(BotError::Protocol("unexpected raw frame".into())),
     }
 }
 

@@ -143,7 +143,7 @@ blueprint prints `version=2, max_actions_k=6`.
 
 ---
 
-## TASK 1 — Rebuild pkr-sota and regenerate artifacts
+## TASK 1 — Rebuild pkr-sota and regenerate artifacts: important  DO NOT DO IT IT'S ALREADY DONE artifacts are ok
 
 **Why first**: old blueprints are hard-rejected by the new loader (Change 4), and the
 new hash inputs (TASK 2) only match keys produced by the new trainer.

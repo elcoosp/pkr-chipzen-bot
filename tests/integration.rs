@@ -19,9 +19,9 @@ use std::sync::{Arc, Mutex};
 
 use futures_util::{SinkExt, StreamExt};
 use tokio::net::TcpListener;
+use tokio_tungstenite::accept_hdr_async;
 use tokio_tungstenite::tungstenite::http::{header::HeaderValue, Request, Response};
 use tokio_tungstenite::tungstenite::Message;
-use tokio_tungstenite::accept_hdr_async;
 
 use pkr_chipzen_bot::adapter::TurnContext;
 use pkr_chipzen_bot::proto::frames::{ActionEntry, GameConfig, TurnState};
@@ -98,9 +98,8 @@ fn state(
 /// Read the next JSON text frame, skipping protocol-level noise.
 async fn next_json<S>(stream: &mut S) -> Option<serde_json::Value>
 where
-    S: futures_util::Stream<
-            Item = Result<Message, tokio_tungstenite::tungstenite::Error>,
-        > + std::marker::Unpin,
+    S: futures_util::Stream<Item = Result<Message, tokio_tungstenite::tungstenite::Error>>
+        + std::marker::Unpin,
 {
     while let Some(msg) = stream.next().await {
         match msg {
@@ -121,7 +120,9 @@ where
     S: futures_util::Sink<Message> + std::marker::Unpin,
     S::Error: std::fmt::Debug,
 {
-    sink.send(Message::text(v.to_string())).await.expect("mock send");
+    sink.send(Message::text(v.to_string()))
+        .await
+        .expect("mock send");
 }
 
 #[tokio::test]
@@ -152,7 +153,16 @@ async fn full_match_against_mock_platform() {
     h3.push(entry(1, "raise", 20, "flop"));
     h3.push(entry(0, "call", 20, "flop"));
     h3.push(entry(1, "check", 0, "turn"));
-    let s3 = state("turn", vec!["Ts", "7h", "2d", "9c"], 0, 100, 400, 400, 80, h3);
+    let s3 = state(
+        "turn",
+        vec!["Ts", "7h", "2d", "9c"],
+        0,
+        100,
+        400,
+        400,
+        80,
+        h3,
+    );
     let valid3 = vec!["check".to_string(), "raise".to_string()];
     let ctx3 = TurnContext::from_turn_state(&s3, &valid3, &cfg).expect("ctx3");
 
@@ -442,9 +452,8 @@ async fn send_turn_request<Sk, St>(
 ) where
     Sk: futures_util::Sink<Message> + std::marker::Unpin,
     Sk::Error: std::fmt::Debug,
-    St: futures_util::Stream<
-            Item = Result<Message, tokio_tungstenite::tungstenite::Error>,
-        > + std::marker::Unpin,
+    St: futures_util::Stream<Item = Result<Message, tokio_tungstenite::tungstenite::Error>>
+        + std::marker::Unpin,
 {
     let state_json = serde_json::to_value(state).expect("serialize state");
     send_json(

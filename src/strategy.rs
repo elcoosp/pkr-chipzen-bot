@@ -29,10 +29,11 @@ use crate::adapter::{bucket_of_raise, TurnContext};
 use crate::error::{BotError, Result};
 use crate::proto::frames::Decision;
 
-/// The trainer's bet-size ladder (`pkr-core/src/state.rs::legal_actions`):
+/// The trainer's bet-size ladder (`pkr-core/src/state.rs::legal_actions_into`):
 /// raise totals are generated as `to_call + f * pot` (facing a bet) or
-/// `f * pot` (opening), for these fractions in this order.
-pub const LADDER: [f64; 5] = [0.5, 0.75, 1.0, 1.5, 2.0];
+/// `f * pot` (opening), for these fractions in this order, plus an all-in
+/// candidate handled separately. Current engine ladder: [0.5, 1.0, 2.0].
+pub const LADDER: [f64; 3] = [0.5, 1.0, 2.0];
 
 /// Paths of the trained artifacts.
 #[derive(Debug, Clone, Default)]
@@ -66,10 +67,10 @@ pub struct Engine {
 impl Engine {
     /// Load all artifacts. Mirrors `binaries/pkr-trainer/src/main.rs` setup.
     pub fn load(paths: &ArtifactPaths, deterministic: bool) -> Result<Engine> {
-        let evaluator = std::sync::Arc::new(
-            TableEvaluator::new(&paths.rank_table)
-                .map_err(|e| BotError::Artifact(format!("rank table {}: {e}", paths.rank_table)))?,
-        );
+        let evaluator =
+            std::sync::Arc::new(TableEvaluator::new(&paths.rank_table).map_err(|e| {
+                BotError::Artifact(format!("rank table {}: {e}", paths.rank_table))
+            })?);
 
         let store = load_centroids(&paths.centroids)
             .map_err(|e| BotError::Artifact(format!("centroids {}: {e}", paths.centroids)))?;
@@ -114,15 +115,30 @@ impl Engine {
         );
         let solver = SolverHandle::new(reader);
 
-        Ok(Engine { solver, abstraction, evaluator, deterministic })
+        Ok(Engine {
+            solver,
+            abstraction,
+            evaluator,
+            deterministic,
+        })
     }
 
     /// The trainer-exact infoset hash for this decision point.
+    ///
+    /// Byte-exact mirror of `pkr-cfr/src/traversal.rs`:
+    /// * board   = the trainer's fixed `[u8; 5]` (dealt cards + zero padding);
+    /// * history = 4-byte LE `history_signature()` (see
+    ///   `adapter::compute_history_signature`);
+    /// * street  = engine street code 0..=3.
     pub fn infoset_hash(&self, ctx: &TurnContext) -> u64 {
-        let board = ctx.padded_board();
-        let history = ctx.padded_history();
-        self.abstraction
-            .get_infoset_hash(&ctx.hole, &board, &history, ctx.street)
+        let n_board = ctx.board.len();
+        let board = &ctx.padded_board()[0..n_board];
+        self.abstraction.get_infoset_hash(
+            &ctx.hole,
+            board,
+            &ctx.history_sig.to_le_bytes(),
+            ctx.street,
+        )
     }
 
     /// Blueprint advice for this infoset, if present.
@@ -156,7 +172,9 @@ impl Engine {
     /// * facing a bet: fold when equity is far below pot odds, call when
     ///   close, raise when very strong (EHS ≥ 0.70)
     fn fallback_decision(&self, ctx: &TurnContext) -> Decision {
-        let equity = calculate_ehs(&ctx.hole, &ctx.board, self.evaluator.as_ref()).0;
+        // calculate_ehs now returns (f32, f32) — widen once, all thresholds
+        // below keep comparing against f64 literals.
+        let equity = calculate_ehs(&ctx.hole, &ctx.board, self.evaluator.as_ref()).0 as f64;
         tracing::debug!(equity, "fallback EHS computed");
         if ctx.to_call <= 0 {
             if ctx.has_action("raise") && ctx.max_raise > 0 && equity >= 0.62 {
@@ -236,8 +254,7 @@ pub fn map_slot(ctx: &TurnContext, slot: usize, deterministic: bool) -> Decision
         1 => check_call(ctx),
         2..=4 => {
             if ctx.has_action("raise") && ctx.max_raise > 0 {
-                ladder_sized_raise(ctx, slot, deterministic)
-                    .unwrap_or_else(|| check_call(ctx))
+                ladder_sized_raise(ctx, slot, deterministic).unwrap_or_else(|| check_call(ctx))
             } else {
                 check_call(ctx)
             }
@@ -281,21 +298,18 @@ pub fn check_call(ctx: &TurnContext) -> Decision {
     }
 }
 
-/// Generate concrete raise totals from the trainer's own size ladder and pick
-/// one whose *engine bucket* equals the sampled slot.
+/// Generate concrete raise totals from the trainer's own size ladder
+/// (`[0.5, 1.0, 2.0]` × pot + all-in) and pick one whose *engine bucket*
+/// (see `adapter::bucket_of_raise`) equals the sampled slot.
 ///
 /// This keeps runtime actions on-tree: the concrete sizes are exactly the
-/// sizes the trainer's `legal_actions()` generated, so the chosen
+/// sizes the trainer's `legal_actions_into()` generated, so the chosen
 /// (infoset, bucket) pair was actually explored during training. During
 /// training the concrete size for a bucket was sampled uniformly among the
 /// ladder candidates in that bucket — we mirror that: sampling mode draws a
 /// uniform candidate among the best bucket-match set; `deterministic` mode
 /// takes the first (smallest ladder size) for reproducibility.
-pub fn ladder_sized_raise(
-    ctx: &TurnContext,
-    slot: usize,
-    deterministic: bool,
-) -> Option<Decision> {
+pub fn ladder_sized_raise(ctx: &TurnContext, slot: usize, deterministic: bool) -> Option<Decision> {
     debug_assert!((2..=4).contains(&slot));
     let pot = ctx.pot.max(1);
     let my_sb = my_street_bet(ctx);
@@ -332,7 +346,10 @@ pub fn ladder_sized_raise(
         .filter(|&&c| bucket_of(c) != 5 || slot == 5 || !has_non_shove)
         .map(|&c| (c, bucket_of(c)))
         .collect();
-    let best_dist = scored.iter().map(|(_, b)| (*b as i64 - slot as i64).abs()).min()?;
+    let best_dist = scored
+        .iter()
+        .map(|(_, b)| (*b as i64 - slot as i64).abs())
+        .min()?;
     let best_set: Vec<i64> = scored
         .iter()
         .filter(|(_, b)| (*b as i64 - slot as i64).abs() == best_dist)
@@ -437,7 +454,7 @@ mod tests {
             min_raise,
             max_raise,
             valid_actions: valid.iter().map(|s| s.to_string()).collect(),
-            abstract_history: vec![1],
+            history_sig: 0,
             config: GameConfig {
                 variant: "nlhe".into(),
                 starting_stack: 1000,
@@ -452,7 +469,10 @@ mod tests {
     fn advice(cdf: [u8; 6]) -> SotaAdvice {
         let mut full = [0u8; 16];
         full[..6].copy_from_slice(&cdf);
-        SotaAdvice { cdf_probabilities: full, len: 6 }
+        SotaAdvice {
+            cdf_probabilities: full,
+            len: 6,
+        }
     }
 
     #[test]
@@ -491,26 +511,27 @@ mod tests {
     #[test]
     fn ladder_sizing_lands_in_sampled_bucket() {
         // Opening bet, pot 80, stack 970 (max_raise = 970, my_sb = 0).
-        // Ladder candidates: 40, 60, 80, 120, 160 → buckets 2, 2, 3, 3, 3
-        // (post-action fraction amt/(pot+amt) is always < 1, so bucket 4 is
-        // unreachable on a fresh opening bet — slot 4 degrades to the
-        // nearest-bucket set). Deterministic mode takes the first of the
-        // best set, mirroring the trainer's uniform-within-bucket sampling.
+        // Ladder candidates: 40, 80, 160
+        //   buckets (NEW engine math): 40/80=0.5 -> 2, 80/80=1.0 -> 2,
+        //   160/80=2.0 -> 4. Slot 3 is dead in the engine.
         let c = ctx(&["check", "raise"], 0, 20, 970, 80);
         let d2 = ladder_sized_raise(&c, 2, true).expect("slot 2");
         assert_eq!(d2.amount.unwrap(), 40);
         assert_eq!(bucket_of_raise(40, c.your_stack, 0, c.pot), 2);
-        let d3 = ladder_sized_raise(&c, 3, true).expect("slot 3");
-        assert_eq!(d3.amount.unwrap(), 80);
-        assert_eq!(bucket_of_raise(80, c.your_stack, 0, c.pot), 3);
-        // Slot 4: nearest available bucket (3) — first of the set.
         let d4 = ladder_sized_raise(&c, 4, true).expect("slot 4");
-        assert_eq!(d4.amount.unwrap(), 80);
-        assert_eq!(bucket_of_raise(80, c.your_stack, 0, c.pot), 3);
+        assert_eq!(d4.amount.unwrap(), 160);
+        assert_eq!(bucket_of_raise(160, c.your_stack, 0, c.pot), 4);
+        // Dead slot 3: nearest-bucket set is all three candidates
+        // (|2-3|=1, |2-3|=1, |4-3|=1); deterministic mode takes the first.
+        let d3 = ladder_sized_raise(&c, 3, true).expect("slot 3");
+        assert_eq!(d3.amount.unwrap(), 40);
         // Sampling mode must stay inside the best set for the slot.
         for _ in 0..50 {
-            let d = ladder_sized_raise(&c, 3, false).unwrap();
-            assert_eq!(bucket_of_raise(d.amount.unwrap(), c.your_stack, 0, c.pot), 3);
+            let d = ladder_sized_raise(&c, 2, false).unwrap();
+            assert_eq!(
+                bucket_of_raise(d.amount.unwrap(), c.your_stack, 0, c.pot),
+                2
+            );
         }
     }
 

@@ -51,10 +51,14 @@ fn hash_is_deterministic_across_engine_reloads() {
     let dir = tempfile::tempdir().unwrap();
     let artifacts = common::build_artifacts(dir.path(), &[(0xdeadbeef, [255u8; 6])]);
 
-    let s = state("preflop", vec![], vec![
-        entry(0, "post_small_blind", 5),
-        entry(1, "post_big_blind", 10),
-    ]);
+    let s = state(
+        "preflop",
+        vec![],
+        vec![
+            entry(0, "post_small_blind", 5),
+            entry(1, "post_big_blind", 10),
+        ],
+    );
     let ctx = TurnContext::from_turn_state(&s, &["check".to_string()], &config()).unwrap();
 
     let h1 = common::synthetic_hash(dir.path(), &ctx);
@@ -72,17 +76,25 @@ fn hash_respects_history_prefix_and_padding() {
     let dir = tempfile::tempdir().unwrap();
     common::build_artifacts(dir.path(), &[(1, [255u8; 6])]);
 
-    let short = state("preflop", vec![], vec![
-        entry(0, "post_small_blind", 5),
-        entry(1, "post_big_blind", 10),
-        entry(0, "raise", 30), // bucket 3
-    ]);
-    let longer = state("preflop", vec![], vec![
-        entry(0, "post_small_blind", 5),
-        entry(1, "post_big_blind", 10),
-        entry(0, "raise", 30), // bucket 3
-        entry(1, "call", 30),  // bucket 1
-    ]);
+    let short = state(
+        "preflop",
+        vec![],
+        vec![
+            entry(0, "post_small_blind", 5),
+            entry(1, "post_big_blind", 10),
+            entry(0, "raise", 30), // bucket 3
+        ],
+    );
+    let longer = state(
+        "preflop",
+        vec![],
+        vec![
+            entry(0, "post_small_blind", 5),
+            entry(1, "post_big_blind", 10),
+            entry(0, "raise", 30), // bucket 3
+            entry(1, "call", 30),  // bucket 1
+        ],
+    );
     let ctx_short = TurnContext::from_turn_state(&short, &[], &config()).unwrap();
     let ctx_long = TurnContext::from_turn_state(&longer, &[], &config()).unwrap();
     assert_ne!(
@@ -102,14 +114,22 @@ fn preflop_hash_is_hole_card_independent_like_the_trainer() {
     let dir = tempfile::tempdir().unwrap();
     common::build_artifacts(dir.path(), &[(1, [255u8; 6])]);
 
-    let mut s1 = state("preflop", vec![], vec![
-        entry(0, "post_small_blind", 5),
-        entry(1, "post_big_blind", 10),
-    ]);
-    let mut s2 = state("preflop", vec![], vec![
-        entry(0, "post_small_blind", 5),
-        entry(1, "post_big_blind", 10),
-    ]);
+    let mut s1 = state(
+        "preflop",
+        vec![],
+        vec![
+            entry(0, "post_small_blind", 5),
+            entry(1, "post_big_blind", 10),
+        ],
+    );
+    let mut s2 = state(
+        "preflop",
+        vec![],
+        vec![
+            entry(0, "post_small_blind", 5),
+            entry(1, "post_big_blind", 10),
+        ],
+    );
     s1.your_hole_cards = vec!["Ah".into(), "Kd".into()];
     s2.your_hole_cards = vec!["7c".into(), "2s".into()];
     let c1 = TurnContext::from_turn_state(&s1, &[], &config()).unwrap();
@@ -128,18 +148,26 @@ fn flop_and_turn_states_hash_differently() {
     let dir = tempfile::tempdir().unwrap();
     common::build_artifacts(dir.path(), &[(1, [255u8; 6])]);
 
-    let flop = state("flop", vec!["Ts", "7h", "2d"], vec![
-        entry(0, "post_small_blind", 5),
-        entry(1, "post_big_blind", 10),
-        entry(0, "raise", 30),
-        entry(1, "call", 30),
-    ]);
-    let flop2 = state("flop", vec!["9s", "7h", "2d"], vec![
-        entry(0, "post_small_blind", 5),
-        entry(1, "post_big_blind", 10),
-        entry(0, "raise", 30),
-        entry(1, "call", 30),
-    ]);
+    let flop = state(
+        "flop",
+        vec!["Ts", "7h", "2d"],
+        vec![
+            entry(0, "post_small_blind", 5),
+            entry(1, "post_big_blind", 10),
+            entry(0, "raise", 30),
+            entry(1, "call", 30),
+        ],
+    );
+    let flop2 = state(
+        "flop",
+        vec!["9s", "7h", "2d"],
+        vec![
+            entry(0, "post_small_blind", 5),
+            entry(1, "post_big_blind", 10),
+            entry(0, "raise", 30),
+            entry(1, "call", 30),
+        ],
+    );
     let ctx_flop = TurnContext::from_turn_state(&flop, &[], &config()).unwrap();
     let ctx_flop2 = TurnContext::from_turn_state(&flop2, &[], &config()).unwrap();
     let h1 = common::synthetic_hash(dir.path(), &ctx_flop);
@@ -157,10 +185,14 @@ fn engine_lookup_hit_and_miss() {
     let dir = tempfile::tempdir().unwrap();
     common::build_base_artifacts(dir.path());
 
-    let mut s = state("preflop", vec![], vec![
-        entry(0, "post_small_blind", 5),
-        entry(1, "post_big_blind", 10),
-    ]);
+    let mut s = state(
+        "preflop",
+        vec![],
+        vec![
+            entry(0, "post_small_blind", 5),
+            entry(1, "post_big_blind", 10),
+        ],
+    );
     s.to_call = 0;
     let ctx = TurnContext::from_turn_state(&s, &["check".to_string()], &config()).unwrap();
     let hit = common::synthetic_hash(dir.path(), &ctx);
@@ -172,13 +204,17 @@ fn engine_lookup_hit_and_miss() {
     );
     let engine = Engine::load(&artifacts, true).unwrap();
 
-    assert!(engine.advice_for(&ctx).is_some(), "hit infoset must resolve");
+    assert!(
+        engine.advice_for(&ctx).is_some(),
+        "hit infoset must resolve"
+    );
     assert_eq!(engine.decide(&ctx), Decision::check());
 
     // Miss: different history → different hash → not in blueprint → fallback.
     let mut s_miss = s.clone();
     s_miss.action_history.push(entry(0, "raise", 30));
-    let ctx_miss = TurnContext::from_turn_state(&s_miss, &["check".to_string()], &config()).unwrap();
+    let ctx_miss =
+        TurnContext::from_turn_state(&s_miss, &["check".to_string()], &config()).unwrap();
     assert!(engine.advice_for(&ctx_miss).is_none());
     // Fallback with equity 0.5 (zero rank table), to_call == 0 → check.
     assert_eq!(engine.decide(&ctx_miss), Decision::check());

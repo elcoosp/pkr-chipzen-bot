@@ -21,8 +21,8 @@ pub mod error;
 pub mod lobby;
 pub mod match_client;
 pub mod proto;
-pub mod strategy;
 pub mod runner;
+pub mod strategy;
 
 pub use config::BotConfig;
 pub use error::{BotError, Result};
