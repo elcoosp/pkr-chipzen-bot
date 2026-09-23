@@ -1,0 +1,59 @@
+[package]
+name = "pkr-chipzen-bot"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.80"
+description = "Chipzen.ai external-API poker bot powered by the pkr-sota CFR runtime"
+license = "Proprietary"
+publish = false
+
+[[bin]]
+name = "pkr-chipzen-bot"
+path = "src/main.rs"
+
+[dependencies]
+# --- pkr-sota engine (path deps to your local checkout; see README) ---
+pkr-contracts = { path = "../pkr-sota/crates/pkr-contracts" }
+pkr-core = { path = "../pkr-sota/crates/pkr-core" }
+pkr-eval = { path = "../pkr-sota/crates/pkr-eval" }
+pkr-abstraction = { path = "../pkr-sota/crates/pkr-abstraction" }
+pkr-runtime = { path = "../pkr-sota/crates/pkr-runtime" }
+
+# --- async runtime + websocket ---
+tokio = { version = "1", features = [
+    "rt-multi-thread",
+    "macros",
+    "net",
+    "time",
+    "sync",
+] }
+tokio-tungstenite = { version = "0.24", features = ["rustls-tls-webpki-roots"] }
+tungstenite = { version = "0.24", default-features = false }
+futures-util = { version = "0.3", default-features = false, features = [
+    "sink",
+    "std",
+] }
+
+# --- serialization ---
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# --- CLI / logging / errors / rng ---
+clap = { version = "4", features = ["derive", "env"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+thiserror = "2"
+rand = "0.10"
+
+[dev-dependencies]
+tempfile = "3"
+bytemuck = { version = "1", features = ["derive"] }
+# Test-only: build synthetic blueprint files (writer-side helpers).
+pkr-export = { path = "../pkr-sota/crates/pkr-export" }
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+panic = "unwind" # unwind (not abort): a panicked hand must not kill the lobby loop
+strip = "symbols"
