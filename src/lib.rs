@@ -28,3 +28,33 @@ pub use config::BotConfig;
 pub use error::{BotError, Result};
 pub use runner::run;
 pub use strategy::Engine;
+
+/// Apply the infoset-signature generation to the engine's env dispatch —
+/// MUST run before any engine type is constructed (`OnceLock` caches).
+/// Mirrors `pkr-runtime/src/bin/pkr-bot-pipe.rs --sig`. Called by `run`
+/// with `BotConfig::sig`; `main.rs` additionally applies it before the
+/// tokio runtime starts.
+pub fn apply_sig_env(sig: u8) {
+    match sig {
+        5 => {
+            std::env::set_var("PKR_SIG_V5", "1");
+            std::env::set_var("PKR_SIG_V4", "0");
+            std::env::set_var("PKR_SIG_V3", "1");
+        }
+        4 => {
+            std::env::set_var("PKR_SIG_V4", "1");
+            std::env::set_var("PKR_SIG_V5", "0");
+            std::env::set_var("PKR_SIG_V3", "1");
+        }
+        3 | 1 => {
+            std::env::set_var("PKR_SIG_V3", "1");
+            std::env::set_var("PKR_SIG_V4", "0");
+            std::env::set_var("PKR_SIG_V5", "0");
+        }
+        _ => {
+            std::env::set_var("PKR_SIG_V3", "0");
+            std::env::set_var("PKR_SIG_V4", "0");
+            std::env::set_var("PKR_SIG_V5", "0");
+        }
+    }
+}

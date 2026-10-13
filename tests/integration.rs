@@ -3,12 +3,15 @@
 //!
 //! lobby auth → hello → ping/pong → matched →
 //! match handshake (token via `Sec-WebSocket-Protocol`) → match_start →
-//! 4 turn_requests exercising [blueprint check-hit, call-hit, shove-hit,
-//! miss→fallback] → action_rejected → guaranteed fallback → match_end.
+//! round_start → 4 turn_requests exercising [blueprint check-hit,
+//! call-hit, jam-hit (K=7 slot 6), miss→engine fallback] →
+//! action_rejected → guaranteed fallback → match_end.
 //!
 //! All synthetic artifacts are deterministic (see `common`), so every
-//! expected action is exact. The wire payloads are serialized from the very
-//! same `TurnState` structs used to compute the blueprint keys — zero drift.
+//! expected action is exact. Every scripted hand is a *legal* HU sequence —
+//! the replay layer now applies the history through the engine's
+//! `GameState`, so malformed histories are rejected rather than silently
+//! bucketed.
 
 // The test binary doesn't inherit the lib's lint allows.
 #![allow(clippy::result_large_err)]
@@ -127,51 +130,50 @@ where
 
 #[tokio::test]
 async fn full_match_against_mock_platform() {
+    common::pin_sig_env();
     let artifact_dir = tempfile::tempdir().expect("artifact dir");
     let cfg = game_config();
 
     // ---- Build the four turn requests and the blueprint keys ----
+    // All hands are legal HU sequences (the replay applies them through the
+    // engine's GameState now). Wire chips; engine = wire × 0.2.
 
-    // r1: preflop, free check, blueprint hit on slot 1 → check.
-    let s1 = state("preflop", vec![], 0, 20, 995, 995, 15, blinds());
-    let valid1 = vec!["check".to_string(), "fold".to_string()];
+    // r1: preflop, SB completes to 10, we (BB, seat 1) act free.
+    // Blueprint hit on slot 1 → check.
+    let mut h1 = blinds();
+    h1.push(entry(0, "call", 10, "preflop"));
+    let s1 = state("preflop", vec![], 0, 20, 990, 990, 20, h1);
+    let valid1 = vec!["check".to_string(), "raise".to_string()];
     let ctx1 = TurnContext::from_turn_state(&s1, &valid1, &cfg).expect("ctx1");
 
-    // r2: flop facing 20 into 80, blueprint hit on slot 1 → call.
+    // r2: flop, we (BB, seat 1) checked, SB bet 20 into 60. Hit slot 1 → call.
     let mut h2 = blinds();
     h2.push(entry(0, "raise", 30, "preflop"));
     h2.push(entry(1, "call", 30, "preflop"));
-    h2.push(entry(1, "raise", 20, "flop"));
+    h2.push(entry(1, "check", 0, "flop"));
+    h2.push(entry(0, "raise", 20, "flop"));
     let s2 = state("flop", vec!["Ts", "7h", "2d"], 20, 40, 970, 970, 80, h2);
     let valid2 = vec!["fold".to_string(), "call".to_string(), "raise".to_string()];
     let ctx2 = TurnContext::from_turn_state(&s2, &valid2, &cfg).expect("ctx2");
 
-    // r3: turn, free, blueprint hit on slot 5 → shove (raise max_raise 400).
+    // r3: turn, free for us (BB, seat 1) after flop checks.
+    // Hit on slot 6 (jam) → raise to max_raise 970.
     let mut h3 = blinds();
     h3.push(entry(0, "raise", 30, "preflop"));
     h3.push(entry(1, "call", 30, "preflop"));
-    h3.push(entry(1, "raise", 20, "flop"));
-    h3.push(entry(0, "call", 20, "flop"));
-    h3.push(entry(1, "check", 0, "turn"));
-    let s3 = state(
-        "turn",
-        vec!["Ts", "7h", "2d", "9c"],
-        0,
-        100,
-        400,
-        400,
-        80,
-        h3,
-    );
+    h3.push(entry(1, "check", 0, "flop"));
+    h3.push(entry(0, "check", 0, "flop"));
+    let s3 = state("turn", vec!["Ts", "7h", "2d", "9c"], 0, 20, 970, 970, 60, h3);
     let valid3 = vec!["check".to_string(), "raise".to_string()];
     let ctx3 = TurnContext::from_turn_state(&s3, &valid3, &cfg).expect("ctx3");
 
-    // r4: river facing 100 into 500, blueprint MISS → EHS fallback → call.
+    // r4: river, we (SB, seat 0) face a 100 bet after all checks. Blueprint
+    // MISS → engine fallback policy → call (argmax legal bucket 1).
     let mut h4 = blinds();
     h4.push(entry(0, "raise", 30, "preflop"));
     h4.push(entry(1, "call", 30, "preflop"));
-    h4.push(entry(1, "raise", 20, "flop"));
-    h4.push(entry(0, "call", 20, "flop"));
+    h4.push(entry(1, "check", 0, "flop"));
+    h4.push(entry(0, "check", 0, "flop"));
     h4.push(entry(1, "check", 0, "turn"));
     h4.push(entry(0, "check", 0, "turn"));
     h4.push(entry(1, "raise", 100, "river"));
@@ -180,9 +182,9 @@ async fn full_match_against_mock_platform() {
         vec!["Ts", "7h", "2d", "9c", "4s"],
         100,
         200,
-        400,
-        300,
-        500,
+        970,
+        970,
+        160,
         h4,
     );
     let valid4 = vec!["fold".to_string(), "call".to_string()];
@@ -202,35 +204,31 @@ async fn full_match_against_mock_platform() {
         ),
         (
             common::synthetic_hash(artifact_dir.path(), &ctx3),
-            common::cdf_all_on(5),
+            common::cdf_all_on(6),
         ),
     ];
     let artifacts: ArtifactPaths = common::build_artifacts(artifact_dir.path(), &entries);
 
     // ---- Scripted turns ----
     let scenarios = vec![
-        // r1: preflop, free check, blueprint hit on slot 1 → check.
         Scenario {
             state: s1,
             valid: valid1,
             expected_action: "check",
             expected_amount: None,
         },
-        // r2: flop facing 20 into 80, blueprint hit on slot 1 → call.
         Scenario {
             state: s2,
             valid: valid2,
             expected_action: "call",
             expected_amount: None,
         },
-        // r3: turn, free, blueprint hit on slot 5 → shove (raise max_raise 400).
         Scenario {
             state: s3,
             valid: valid3,
             expected_action: "raise",
-            expected_amount: Some(400),
+            expected_amount: Some(970),
         },
-        // r4: river facing 100 into 500, blueprint MISS → EHS fallback → call.
         Scenario {
             state: s4,
             valid: valid4,
@@ -256,6 +254,11 @@ async fn full_match_against_mock_platform() {
         loop_matches: false,
         artifacts,
         deterministic: true,
+        sig: 5,
+        preflop_k: common::SYNTHETIC_PREFLOP_K,
+        fallback_ehs: false,
+        // Synthetic artifacts carry no 305 MB turn table.
+        require_tables: false,
     };
     let result = tokio::time::timeout(
         std::time::Duration::from_secs(60),

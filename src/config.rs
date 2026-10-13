@@ -19,6 +19,18 @@ pub struct BotConfig {
     pub artifacts: ArtifactPaths,
     /// Argmax instead of CDF sampling.
     pub deterministic: bool,
+    /// Infoset signature generation (1–5). The shipped k7-baseline
+    /// checkpoint was trained with `PKR_SIG_V5=1` → **5**.
+    pub sig: u8,
+    /// Preflop centroid count for the fingerprint check (k7-baseline: 200).
+    pub preflop_k: u32,
+    /// Use the EHS heuristic on blueprint misses instead of the engine's
+    /// `fallback_advice()` mild policy.
+    pub fallback_ehs: bool,
+    /// Hard-fail when the flop/turn/river abstraction tables are missing
+    /// (true for the CLI; the integration test relaxes it for synthetic
+    /// artifacts without the 305 MB turn table).
+    pub require_tables: bool,
 }
 
 impl BotConfig {
@@ -37,13 +49,22 @@ impl BotConfig {
                 "token must be a cz_extbot_… token (see onboarding §2)".into(),
             ));
         }
-        if self.artifacts.blueprint.trim().is_empty()
-            || self.artifacts.rank_table.trim().is_empty()
-            || self.artifacts.centroids.trim().is_empty()
-        {
+        if !(1..=5).contains(&self.sig) {
+            return Err(BotError::Config(format!(
+                "--sig must be 1..=5, got {}",
+                self.sig
+            )));
+        }
+        if self.preflop_k == 0 {
+            return Err(BotError::Config("--preflop-k must be positive".into()));
+        }
+        if self.artifacts.blueprint.trim().is_empty() && self.artifacts.ckpt.is_none() {
             return Err(BotError::Config(
-                "blueprint, rank_table and centroids paths are required".into(),
+                "either --blueprint or --ckpt must be provided".into(),
             ));
+        }
+        if self.artifacts.centroids.trim().is_empty() {
+            return Err(BotError::Config("centroids path is required".into()));
         }
         Ok(())
     }
@@ -61,21 +82,29 @@ mod tests {
             loop_matches: false,
             artifacts: ArtifactPaths {
                 blueprint: "blueprint.bin".into(),
-                rank_table: "hand_ranks.bin".into(),
                 centroids: "centroids.bin".into(),
                 ..Default::default()
             },
             deterministic: false,
+            sig: 5,
+            preflop_k: 200,
+            fallback_ehs: false,
+            require_tables: true,
         }
     }
 
     #[test]
     fn accepts_valid_config() {
         assert!(cfg().validate().is_ok());
+        // Checkpoint-only mode is valid (blueprint omitted).
+        let mut c = cfg();
+        c.artifacts.blueprint = String::new();
+        c.artifacts.ckpt = Some("train.ckpt".into());
+        assert!(c.validate().is_ok());
     }
 
     #[test]
-    fn rejects_bad_url_token_and_paths() {
+    fn rejects_bad_url_token_paths_and_sig() {
         let mut c = cfg();
         c.base_url = "https://staging.chipzen.ai".into();
         assert!(c.validate().is_err());
@@ -90,6 +119,14 @@ mod tests {
 
         let mut c = cfg();
         c.artifacts.blueprint = "".into();
+        assert!(c.validate().is_err(), "no blueprint and no ckpt");
+
+        let mut c = cfg();
+        c.sig = 9;
+        assert!(c.validate().is_err());
+
+        let mut c = cfg();
+        c.preflop_k = 0;
         assert!(c.validate().is_err());
     }
 }

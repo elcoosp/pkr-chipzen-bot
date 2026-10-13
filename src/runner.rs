@@ -47,12 +47,25 @@ enum SessionOutcome {
 /// `cfg.loop_matches` is set (then it runs until a fatal error).
 pub async fn run(cfg: BotConfig) -> Result<()> {
     cfg.validate()?;
-    let engine = crate::Engine::load(&cfg.artifacts, cfg.deterministic)?;
+    // Pin the engine's signature dispatch BEFORE anything loads (OnceLocks).
+    crate::apply_sig_env(cfg.sig);
+    let opts = crate::strategy::EngineOptions {
+        deterministic: cfg.deterministic,
+        fallback_ehs: cfg.fallback_ehs,
+        preflop_k: cfg.preflop_k,
+        require_tables: cfg.require_tables,
+    };
+    let engine = crate::Engine::load(&cfg.artifacts, &opts)?;
     info!(
         base_url = %cfg.base_url,
         bot_id = %cfg.bot_id,
         token = %mask(&cfg.token),
         loop_mode = cfg.loop_matches,
+        sig = cfg.sig,
+        preflop_k = cfg.preflop_k,
+        session_mode = engine.vsearch_active(),
+        deterministic = cfg.deterministic,
+        fallback_ehs = cfg.fallback_ehs,
         "bot starting"
     );
 
